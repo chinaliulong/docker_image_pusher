@@ -1,2 +1,4 @@
 redis:7.2.7
 redis:7.4.3
+ubuntu:focal
+ossrs/srs:ubuntu20
