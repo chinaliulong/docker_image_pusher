@@ -4,3 +4,4 @@ redis:7.4.5
 ubuntu:focal
 ossrs/srs:ubuntu20
 nacos/nacos-server:v2.2.3
+rabbitmq:3.13.7-management
