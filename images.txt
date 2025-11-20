@@ -6,6 +6,6 @@ ubuntu:focal
 ossrs/srs:ubuntu20
 nacos/nacos-server:v2.2.3
 rabbitmq:3.13.7-management
-openjdk:8
+#openjdk:8
 nginx:1.28.0
 linuxserver/librespeed:5.4.1
