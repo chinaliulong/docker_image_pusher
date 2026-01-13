@@ -10,4 +10,5 @@
 #nginx:1.28.0
 #linuxserver/librespeed:5.4.1
 #zlmediakit/zlmediakit:master
-emqx/emqx-enterprise:6.0.1
+#emqx/emqx-enterprise:6.0.1
+eclipse-mosquitto:latest
