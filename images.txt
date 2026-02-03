@@ -12,4 +12,5 @@
 #zlmediakit/zlmediakit:master
 #emqx/emqx-enterprise:6.0.1
 #eclipse-mosquitto:latest
-rabbitmq:4.1.6-management
+#rabbitmq:4.1.6-management
+nginx:1.28.1
