@@ -14,4 +14,4 @@
 #eclipse-mosquitto:latest
 #rabbitmq:4.1.6-management
 #nginx:1.28.1
-mongo:5.5
+mongo:5.0.5
