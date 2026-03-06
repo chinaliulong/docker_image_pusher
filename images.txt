@@ -17,4 +17,3 @@ nginx:1.28.2
 #rabbitmq:4.1.6-management
 #mongo:5.0.5
 #node:20.17.0
-mcr.microsoft.com/playwright/node:latest
