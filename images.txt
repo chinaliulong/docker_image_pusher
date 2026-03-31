@@ -26,4 +26,5 @@
 #--platform=linux/arm64 apache/kafka:3.9.1
 #--platform=linux/arm64 clickhouse:latest
 #--platform=linux/arm64 ubuntu:22.04
---platform=linux/arm64 ubuntu:24.04
+#--platform=linux/arm64 ubuntu:24.04
+clickhouse/clickhouse-server:26.3.2
