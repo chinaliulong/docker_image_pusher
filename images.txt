@@ -17,4 +17,5 @@
 #rabbitmq:4.1.6-management
 #mongo:5.0.5
 #node:20.17.0
---platform=linux/arm64  eclipse-temurin:21-jdk
+#--platform=linux/arm64  eclipse-temurin:21-jdk
+--platform=linux/arm64  nacos-server:v2.5.2
