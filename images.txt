@@ -21,4 +21,5 @@
 #--platform=linux/arm64  nacos/nacos-server:v2.5.2
 #--platform=linux/arm64 clickhouse/clickhouse-server:26.3.2
 #--platform=linux/arm64 postgis/postgis:16-3.5
---platform=linux/arm64 kartoza/postgis:16-3.4
+#--platform=linux/arm64 kartoza/postgis:16-3.4
+--platform=linux/arm64 redis:7.2.7
