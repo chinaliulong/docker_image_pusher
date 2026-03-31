@@ -19,4 +19,4 @@
 #node:20.17.0
 #--platform=linux/arm64  eclipse-temurin:21-jdk
 #--platform=linux/arm64  nacos/nacos-server:v2.5.2
---platform=linux/arm64clickhouse/clickhouse-server:26.3.2
+--platform=linux/arm64 clickhouse/clickhouse-server:26.3.2
