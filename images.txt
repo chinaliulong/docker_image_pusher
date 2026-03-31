@@ -23,4 +23,5 @@
 #--platform=linux/arm64 postgis/postgis:16-3.5
 #--platform=linux/arm64 kartoza/postgis:16-3.4
 #--platform=linux/arm64 redis:7.2.7
---platform=linux/arm64 apache/kafka:3.9.1
+#--platform=linux/arm64 apache/kafka:3.9.1
+--platform=linux/arm64 clickhouse:26.3.2
