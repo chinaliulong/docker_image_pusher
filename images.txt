@@ -1,4 +1,4 @@
-redis:6.2.6
+#redis:6.2.6
 #redis:7.2.7
 #redis:7.4.3
 #redis:7.4.5
@@ -29,3 +29,4 @@ redis:6.2.6
 #--platform=linux/arm64 ubuntu:22.04
 #--platform=linux/arm64 ubuntu:24.04
 #clickhouse/clickhouse-server:26.3.2
+postgresql:14.2
