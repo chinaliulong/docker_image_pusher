@@ -1,3 +1,4 @@
+redis:6.2
 #redis:7.2.7
 #redis:7.4.3
 #redis:7.4.5
@@ -27,4 +28,4 @@
 #--platform=linux/arm64 clickhouse:latest
 #--platform=linux/arm64 ubuntu:22.04
 #--platform=linux/arm64 ubuntu:24.04
-clickhouse/clickhouse-server:26.3.2
+#clickhouse/clickhouse-server:26.3.2
