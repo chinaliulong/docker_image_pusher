@@ -4,7 +4,8 @@
 #redis:7.4.5
 #redis:7.4.6
 #redis:7.4.9
-redis:7.4.10
+#redis:7.4.10
+redis:7.4.11
 #ubuntu:focal
 #ossrs/srs:ubuntu20
 #nacos/nacos-server:v2.2.3
