@@ -5,11 +5,13 @@
 #redis:7.4.6
 #redis:7.4.9
 #redis:7.4.10
-redis:7.4.11
+#redis:7.4.11
 #ubuntu:focal
 #ossrs/srs:ubuntu20
 #nacos/nacos-server:v2.2.3
 #rabbitmq:3.13.7-management
+#rabbitmq:4.1.6-management
+rabbitmq:4.2.9-management
 #openjdk:8
 #nginx:1.28.0
 #nginx:1.28.1
@@ -24,7 +26,6 @@ nginx:1.30.4
 #zlmediakit/zlmediakit:master
 #emqx/emqx-enterprise:6.0.1
 #eclipse-mosquitto:latest
-#rabbitmq:4.1.6-management
 #mongo:5.0.5
 #node:20.17.0
 #--platform=linux/arm64  eclipse-temurin:21-jdk
