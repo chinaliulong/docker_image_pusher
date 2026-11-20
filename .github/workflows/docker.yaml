@@ -4,6 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
+  # 需要定时执行时打开（cron 使用 UTC 时区）
+  # schedule:
+  #   - cron: "0 18 * * 0"
 
 
 env:
@@ -12,11 +15,17 @@ env:
   ALIYUN_REGISTRY_USER: "${{ secrets.ALIYUN_REGISTRY_USER }}"
   ALIYUN_REGISTRY_PASSWORD: "${{ secrets.ALIYUN_REGISTRY_PASSWORD }}"
 
+# 同一时间只跑一个，避免两次运行互相挤占磁盘 / 抢占同名仓库
+concurrency:
+  group: docker-pusher
+  cancel-in-progress: false
+
 jobs:
 
   build:
     name: Pull
     runs-on: ubuntu-latest
+    timeout-minutes: 350
     steps:
     - name: Before freeing up disk space
       run: |
@@ -24,20 +33,51 @@ jobs:
         echo "=============================================================================="
         df -hT
         echo "=============================================================================="
+        sudo du -xhd1 / 2>/dev/null | sort -rh | head -15 || true
+        echo "=============================================================================="
 
-    # 增加可用磁盘空间
-    - name: Maximize build space
-      uses: easimon/maximize-build-space@master
-      with:
-
-        root-reserve-mb: 2048
-        swap-size-mb: 128
-        remove-dotnet: 'true'
-        remove-haskell: 'true'
-        # 如果空间还是不够用，可以把以下开启，清理出更多空间
-        # remove-android: 'true'
-        # remove-codeql: 'true'
-        build-mount-path: '/var/lib/docker/'
+    # 注意：这里不再使用 easimon/maximize-build-space。
+    # 该 action 依赖 LVM 重新划分分区，与 2026 年新版 GitHub 公共 runner 镜像不兼容
+    # （参见上游 issue #55 / #58：会导致可用空间反而变小甚至根分区被写满）。
+    # 改为直接删除 runner 预装的大体积工具链，稳定回收 20GB+。
+    - name: Maximize build space (rm -rf, no LVM)
+      run: |
+        set -uo pipefail
+        total=0
+        for d in \
+          /usr/share/dotnet \
+          /usr/local/lib/android \
+          /opt/ghc \
+          /usr/local/.ghcup \
+          /opt/hostedtoolcache/CodeQL \
+          /usr/local/share/boost \
+          /usr/share/swift \
+          /usr/local/graalvm \
+          /opt/microsoft \
+          /opt/az \
+          /usr/lib/google-cloud-sdk \
+          /usr/local/lib/node_modules ; do
+          if [ -e "$d" ]; then
+            mb=$(sudo du -sm "$d" 2>/dev/null | awk '{print $1}')
+            sudo rm -rf "$d"
+            echo "removed $d (${mb:-0} MB)"
+            total=$((total + ${mb:-0}))
+          fi
+        done
+        # 清掉 runner 预装的 docker 镜像与 apt 缓存
+        sudo docker image prune -af >/dev/null 2>&1 || true
+        sudo apt-get -qq clean || true
+        echo "=============================================="
+        echo "reclaimed about ${total} MB"
+        echo "=============================================="
+        df -hT
+        echo "=============================================="
+        # 若根分区可用空间仍不足 10GB，直接给出显式警告，便于判断是镜像过大还是清理失效
+        avail_mb=$(df --output=avail -m / | tail -1 | tr -d ' ')
+        echo "available on / : ${avail_mb} MB"
+        if [ "$avail_mb" -lt 10240 ]; then
+          echo "::warning::清理后根分区可用空间仅 ${avail_mb}MB，大镜像可能仍会空间不足"
+        fi
 
     - name: Restart docker
       run: sudo service docker restart
@@ -52,106 +92,147 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Docker Setup Buildx
-      uses: docker/setup-buildx-action@v3
+    # 大镜像兜底通道：skopeo 直接从源仓库流式转存到阿里云，
+    # 全程不落本地磁盘，因此不受 runner 剩余空间限制。
+    - name: Install skopeo (fallback for huge images)
+      run: |
+        sudo apt-get -qq update || true
+        sudo apt-get install -y -qq skopeo || echo "skopeo 安装失败，将只使用 docker 通道"
 
     - name: Build and push image Aliyun
       run: |
-        docker login -u $ALIYUN_REGISTRY_USER -p $ALIYUN_REGISTRY_PASSWORD $ALIYUN_REGISTRY
-        # 数据预处理,判断镜像是否重名
+        set -uo pipefail
+
+        docker login -u "$ALIYUN_REGISTRY_USER" -p "$ALIYUN_REGISTRY_PASSWORD" "$ALIYUN_REGISTRY"
+
+        # 使用 skopeo 直传，不占用本地磁盘
+        skopeo_copy() {
+          local src="$1" dst="$2" plat="$3"
+          if ! command -v skopeo >/dev/null 2>&1; then
+            echo "::error::skopeo 不可用，无法直传 $src"
+            return 1
+          fi
+          local extra=(--all)
+          if [ -n "$plat" ]; then
+            # 指定架构时只转存该架构（等价于 docker pull --platform）
+            extra=(--override-os "${plat%%/*}" --override-arch "${plat##*/}")
+          fi
+          echo "skopeo copy ${extra[*]} docker://$src -> docker://$dst"
+          skopeo copy --retry-times 3 "${extra[@]}" \
+            --dest-creds "$ALIYUN_REGISTRY_USER:$ALIYUN_REGISTRY_PASSWORD" \
+            "docker://$src" "docker://$dst"
+        }
+
+        # ================= 第一轮：数据预处理，判断镜像是否重名 =================
         declare -A duplicate_images
         declare -A temp_map
         while IFS= read -r line || [ -n "$line" ]; do
             # 忽略空行与注释
-            [[ -z "$line" ]] && continue
+            [[ -z "${line// }" ]] && continue
             if echo "$line" | grep -q '^\s*#'; then
                 continue
             fi
-            
-            # 获取镜像的完整名称，例如kasmweb/nginx:1.25.3（命名空间/镜像名:版本号）
+
             image=$(echo "$line" | awk '{print $NF}')
-            # 将@sha256:等字符删除
             image="${image%%@*}"
-            echo "image $image"
-            # 获取镜像名:版本号  例如nginx:1.25.3
             image_name_tag=$(echo "$image" | awk -F'/' '{print $NF}')
-            echo "image_name_tag $image_name_tag"
-            # 获取命名空间 例如kasmweb,  这里有种特殊情况 docker.io/nginx，把docker.io当成命名空间，也OK
             name_space=$(echo "$image" | awk -F'/' '{if (NF==3) print $2; else if (NF==2) print $1; else print ""}')
-            echo "name_space: $name_space"
-            # 这里不要是空值影响判断
             name_space="${name_space}_"
-            # 获取镜像名例如nginx
             image_name=$(echo "$image_name_tag" | awk -F':' '{print $1}')
-            echo "image_name: $image_name"
-            
-            # 如果镜像存在于数组中，则添加temp_map
-            if [[ -n "${temp_map[$image_name]}" ]]; then
-                 # 如果temp_map已经存在镜像名，判断是不是同一命名空间
-                 if [[ "${temp_map[$image_name]}" != $name_space  ]]; then
+
+            if [[ -n "${temp_map[$image_name]:-}" ]]; then
+                 if [[ "${temp_map[$image_name]}" != "$name_space" ]]; then
                     echo "duplicate image name: $image_name"
                     duplicate_images[$image_name]="true"
                  fi
             else
-                # 存镜像的命名空间
                 temp_map[$image_name]=$name_space
-            fi       
+            fi
         done < images.txt
-        
-        
+
+        # ================= 第二轮：逐个拉取 / 推送 / 清理 =================
+        failed=()
+        succeeded=0
         while IFS= read -r line || [ -n "$line" ]; do
             # 忽略空行与注释
-            [[ -z "$line" ]] && continue
+            [[ -z "${line// }" ]] && continue
             if echo "$line" | grep -q '^\s*#'; then
                 continue
             fi
-        
+
+            echo "::group::处理 $line"
             echo "docker pull $line"
-            docker pull $line
+
             platform=$(echo "$line" | awk -F'--platform[ =]' '{if (NF>1) print $2}' | awk '{print $1}')
-            echo "platform is $platform"
-            # 如果存在架构信息 将架构信息拼到镜像名称前面
             if [ -z "$platform" ]; then
                 platform_prefix=""
             else
                 platform_prefix="${platform//\//_}_"
             fi
-            echo "platform_prefix is $platform_prefix"
-            # 获取镜像的完整名称，例如kasmweb/nginx:1.25.3（命名空间/镜像名:版本号）
-            image=$(echo "$line" | awk '{print $NF}')
 
-            # 获取 镜像名:版本号  例如nginx:1.25.3
+            image=$(echo "$line" | awk '{print $NF}')
             image_name_tag=$(echo "$image" | awk -F'/' '{print $NF}')
-            # 获取命名空间 例如kasmweb  这里有种特殊情况 docker.io/nginx，把docker.io当成命名空间，也OK
             name_space=$(echo "$image" | awk -F'/' '{if (NF==3) print $2; else if (NF==2) print $1; else print ""}')
-            # 获取镜像名例  例如nginx
             image_name=$(echo "$image_name_tag" | awk -F':' '{print $1}')
-        
+
             name_space_prefix=""
-            # 如果镜像名重名
-            if [[ -n "${duplicate_images[$image_name]}" ]]; then
-               #如果命名空间非空，将命名空间加到前缀
-               if [[ -n "${name_space}" ]]; then
+            if [[ -n "${duplicate_images[$image_name]:-}" ]]; then
+               if [[ -n "$name_space" ]]; then
                   name_space_prefix="${name_space}_"
                fi
             fi
-            
-            # 将@sha256:等字符删除
+
             image_name_tag="${image_name_tag%%@*}"
             new_image="$ALIYUN_REGISTRY/$ALIYUN_NAME_SPACE/$platform_prefix$name_space_prefix$image_name_tag"
-            echo "docker tag $image $new_image"
-            docker tag $image $new_image
-            echo "docker push $new_image"
-            docker push $new_image
+
+            rc=0
+            # 拉取失败（最常见就是 no space left on device）时不让整个 job 挂掉
+            if docker pull "$line"; then
+                echo "docker tag $image $new_image"
+                if docker tag "$image" "$new_image"; then
+                    echo "docker push $new_image"
+                    docker push "$new_image" || rc=1
+                else
+                    rc=1
+                fi
+            else
+                rc=1
+            fi
+
+            if [ "$rc" -ne 0 ]; then
+                echo "::warning::docker 通道处理 $line 失败，清理本地层后改用 skopeo 直传"
+                docker rmi -f "$image" "$new_image" >/dev/null 2>&1 || true
+                docker image prune -af >/dev/null 2>&1 || true
+                rc=0
+                skopeo_copy "$image" "$new_image" "$platform" || rc=1
+            fi
+
+            # 无论成功与否都清理，避免残留下一个镜像没有空间
             echo "开始清理磁盘空间"
-            echo "=============================================================================="
-            df -hT
-            echo "=============================================================================="
-            docker rmi $image
-            docker rmi $new_image
-            echo "磁盘空间清理完毕"
-            echo "=============================================================================="
-            df -hT
-            echo "=============================================================================="     
-            
+            docker rmi -f "$image" "$new_image" >/dev/null 2>&1 || true
+            docker image prune -af >/dev/null 2>&1 || true
+            docker builder prune -af >/dev/null 2>&1 || true
+            df -hT | sed -n '1p;/\/$/p'
+
+            if [ "$rc" -ne 0 ]; then
+                echo "::error::$line 处理失败"
+                failed+=("$line")
+            else
+                echo "完成: $new_image"
+                succeeded=$((succeeded + 1))
+            fi
+            echo "::endgroup::"
         done < images.txt
+
+        docker logout "$ALIYUN_REGISTRY" >/dev/null 2>&1 || true
+
+        echo "=============================================="
+        echo "成功 ${succeeded} 个，失败 ${#failed[@]} 个"
+        if [ ${#failed[@]} -ne 0 ]; then
+            printf '失败列表:\n'
+            printf '  - %s\n' "${failed[@]}"
+            echo "::error::以下镜像同步失败: ${failed[*]}"
+            exit 1
+        fi
+        echo "全部镜像同步完成"
+        echo "=============================================="
